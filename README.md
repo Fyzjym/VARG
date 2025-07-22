@@ -36,4 +36,4 @@ We use CROHME14/16/19 dataset.
 # 📌 ACK.
 Thanks to the open source guys.
 
-
+# More details will be updated soon.
