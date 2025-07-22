@@ -1,20 +1,39 @@
-# Description
-SFRD: Handwritten Mathematical Expressions Generation by Spatial-Aware Feature Refinement Diffusion
-
-# Methodology
+<h1 align="center">Visual Autoregressive Modeling for Handwritten Mathematical Expression Generation</h1>
 
 
-![Model](https://github.com/Fyzjym/SFRD_Part/blob/master/fig/01_net_GO.png)
+# ⭐️ contribution
+- We propose a novel framework for HMEG, termed VARG, which effectively models the spatial structure of expressions while preserving handwriting style. To the best of our knowledge, this is the first HMEG method to introduce a visual autoregressive generation mechanism.
+- We propose SAT, which progressively models content representations under the guidance of style conditions.
+- We propose a HCEM that captures the inherent hierarchical relationships within expression content via a HEU, and employs a CAM with gated mechanism to dynamically suppress redundant features and enhance structural consistency in content representation.
+- Extensive experiments on benchmark datasets demonstrate that VARG outperforms state-of-the-art models across four evaluation metrics. Furthermore, we show that the HME images synthesized by \textit{VARG} can significantly improve downstream HMER performance when used as data augmentation.
 
 
-# Comparison
+<p align="center">
+  <img src="https://github.com/Fyzjym/VARG/blob/master/fig/image.png" width="75%">
+</p>
 
-![Result](https://github.com/Fyzjym/SFRD_Part/blob/master/fig/compare.png)
-![Result](https://github.com/Fyzjym/SFRD_Part/blob/master/fig/abla.png)
-![Result](https://github.com/Fyzjym/SFRD_Part/blob/master/fig/ALL_3_sence.png)
-
-
+<p align="center"><b>Overview of the proposed One-DM</b></p>
 
 
-# Acknowledgements
-Our codebase is built upon One-DM (ECCV 2024), and we would like to thank the authors for their contributions.
+# 📝 Datasets
+
+We use CROHME14/16/19 dataset.
+
+
+# 🔥 Train
+<p>
+<code>
+  CUDA_VISIBLE_DEVICES=0,1,2,3 train.py
+</code>
+</p>
+
+# 📈 Comparison with other methods
+
+<p align="center">
+  <img src="https://github.com/Fyzjym/VARG/blob/master/fig/img2.png" width="75%">
+</p>
+
+# 📌 ACK.
+Thanks to the open source guys.
+
+
