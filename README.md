@@ -9,7 +9,7 @@
 
 
 <p align="center">
-  <img src="https://github.com/Fyzjym/VARG/blob/master/fig/image.png" width="75%">
+  <img src="fig/image.png" width="75%">
 </p>
 
 <p align="center"><b>Overview of the proposed One-DM</b></p>
@@ -30,7 +30,7 @@ We use CROHME14/16/19 dataset.
 # 📈 Comparison with other methods
 
 <p align="center">
-  <img src="https://github.com/Fyzjym/VARG/blob/master/fig/img2.png" width="75%">
+  <img src="fig/img2.png" width="75%">
 </p>
 
 # 📌 ACK.
