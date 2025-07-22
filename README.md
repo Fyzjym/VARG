@@ -9,7 +9,7 @@
 
 
 <p align="center">
-  <img src="fig/image.png" width="75%">
+  <img src="fig/imgae.png" width="75%">
 </p>
 
 <p align="center"><b>Overview of the proposed One-DM</b></p>
