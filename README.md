@@ -48,7 +48,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 train.py
 
 ## 📂 Project Structure
 
-'''
+```
 .
 ├── configs/            # Experiment configurations (YAML)
 ├── data/               # Dataset loading and data augmentation
@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 train.py
 ├── utils/              # Metrics, logging, and visualization utilities
 └── train.py            # Main training entry
 
-'''
+```
 
 
 ---
