@@ -49,11 +49,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 train.py
 ## 📂 Project Structure
 
 .
-├── configs/            # Experiment configurations (YAML files)
-├── data/               # Data loading and augmentation scripts
-├── models/             # Implementation of VARG, SAT, and HCEM
-├── utils/              # Metrics, logging, and visualization tools
-└── train.py            # Main training script
+├── configs/            # Experiment configurations (YAML)
+├── data/               # Dataset loading and data augmentation
+├── models/             # Model implementations (VARG, SAT, HCEM)
+├── utils/              # Metrics, logging, and visualization utilities
+└── train.py            # Main training entry
+
+
 
 ---
 
