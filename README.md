@@ -1,6 +1,6 @@
 # VARG
 
-Official implementation of the paper: **"Visual Autoregressive Modeling for Handwritten Mathematical Expression Generation"**.
+Official implementation of the paper: **"VARG: Visual Autoregressive Generation for Handwritten Mathematical Expressions"**.
 
 ---
 
