@@ -68,7 +68,14 @@ class HyperbolicConv2d(nn.Module):
         return new_x_hyp
 
 
-class HyperbolicCNNEncoder(nn.Module):
+class HEU(nn.Module):
+    """Hyperbolic Embedding Unit used by HCEM.
+
+    Project a content feature map, apply the existing hyperbolic convolution
+    blocks, and return spatial tokens [B, H*W, output_dim]. The exponential,
+    logarithmic, and convolution operations are preserved from the supplied
+    implementation.
+    """
 
     def __init__(self, in_chans: int = 512, embed_dim: int = 256, depth: int = 2, output_dim: int = 512):
         super().__init__()

@@ -9,7 +9,7 @@ from einops import rearrange, repeat
 from inspect import isfunction
 import math
 import random
-from models.fusion import Mix_TR
+from models.fusion import VARGConditioner
 
 
 def checkpoint(func, inputs, params, flag):
@@ -107,8 +107,6 @@ def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     else:
         embedding = repeat(timesteps, 'b -> b d', d=dim)
     return embedding
-
-
 
 
 # feedforward
@@ -246,7 +244,6 @@ class BasicTransformerBlock(nn.Module):
         return x
 
 
-
 class SpatialTransformer(nn.Module):
     """
     Transformer block for image-like data.
@@ -281,7 +278,6 @@ class SpatialTransformer(nn.Module):
         self.part = part
     def forward(self, x, context=None):
         # note: if no context is given, cross-attention defaults to self-attention
-        #print('x spatial trans in', x.shape)
         
         
         # note: if no context is given, cross-attention defaults to self-attention
@@ -298,7 +294,6 @@ class SpatialTransformer(nn.Module):
             x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
         x = self.proj_out(x)
         return x + x_in
-
 
 
 # dummy replace
@@ -544,7 +539,6 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-
 class AttentionBlock(nn.Module):
     """
     An attention block that allows spatial positions to attend to each other.
@@ -681,7 +675,7 @@ class QKVAttention(nn.Module):
 
 ##################################################################################
 
-class UNetModel(nn.Module):
+class VARG(nn.Module):
     """
     The full UNet model with attention and timestep embedding.
     :param in_channels: channels in the input Tensor.
@@ -777,7 +771,7 @@ class UNetModel(nn.Module):
             nn.Linear(time_embed_dim, time_embed_dim),
         )
 
-        self.mix_net = Mix_TR(d_model=context_dim)
+        self.conditioner = VARGConditioner(d_model=context_dim)
         #==================== INPUT BLOCK ====================
 
         self.input_blocks = nn.ModuleList(
@@ -974,23 +968,20 @@ class UNetModel(nn.Module):
         Apply the model to an input batch.
         :param x: an [N x C x ...] Tensor of inputs.
         :param timesteps: a 1-D batch of timesteps.
-        :param context: styled characters conditioning plugged in via crossattn
+        :param context: SAT and HCEM context conditioning through cross-attention
         :return: an [N x C x ...] Tensor of outputs.
         """
-        #print('y', y.shape)
         
         hs = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False) # t_emb, B 512
         emb = self.time_embed(t_emb) # emb, B 2024
 
         if tag=='train':
-            # context, high_nce_emb, low_nce_emb = self.mix_net(style, laplace, content)
-            # context, low_nce_emb = self.mix_net(style, laplace, content) # context, B 256 512  low_nce_emb, B 2 256
-            context, low_nce_emb = self.mix_net(style, laplace, content, latex_embed)
+            context, style_embeddings = self.conditioner(style, laplace, content, latex_embed)
 
         else:
-            # context = self.mix_net.generate(style, laplace, content)
-            context = self.mix_net.generate(style, laplace, content, latex_embed)
+            # context = self.conditioner.generate(style, laplace, content)
+            context = self.conditioner.generate(style, laplace, content, latex_embed)
 
         h = x.type(self.dtype) # h, B 4 32 32
         
@@ -1013,10 +1004,9 @@ class UNetModel(nn.Module):
             return self.id_predictor(h)
         else:
             if tag == 'train':
-                # return self.out(h), high_nce_emb, low_nce_emb
                 # h B, 512, 32, 32
                 # self.out(h) B, 4, 32, 32
-                return self.out(h), low_nce_emb
+                return self.out(h), style_embeddings
 
             else:
                 return self.out(h)

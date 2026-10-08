@@ -3,7 +3,7 @@ import numpy as np
 import random
 
 # fix random seeds for reproducibility
-def fix_seed(random_seed):
+def set_seed(random_seed):
     random.seed(random_seed)
     np.random.seed(random_seed)
     torch.backends.cudnn.deterministic = True

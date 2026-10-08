@@ -1,0 +1,44 @@
+# CROHME training setup reported in the manuscript, Section 4.1.2.
+# Edit the data paths to point to your prepared image and annotation directories.
+TRAIN:
+  TYPE: train
+  IMG_H: 256
+  IMG_W: 256
+  IMS_PER_BATCH: 32
+  SEED: 1001
+  SNAPSHOT_ITERS: 25
+  SNAPSHOT_BEGIN: 0
+  VALIDATE_ITERS: 25
+  VALIDATE_BEGIN: 0
+
+TEST:
+  TYPE: test
+  IMG_H: 256
+  IMG_W: 256
+  IMS_PER_BATCH: 16
+
+DATA_LOADER:
+  NUM_THREADS: 4
+  IMAGE_PATH: data/CROHME/images
+  STYLE_PATH: data/CROHME/styles
+  CONTENT_PATH: data/CROHME/content
+  LAPLACE_PATH: ''
+  TRAIN_ANNOTATIONS: data/CROHME/annotations/train.txt
+  TEST_ANNOTATIONS: data/CROHME/annotations/test.txt
+  LATEX_ANNOTATIONS: data/CROHME/annotations/all.txt
+  VALIDATION_CONTENT: data/CROHME/content/test/000/example.png
+
+MODEL:
+  IN_CHANNELS: 4
+  OUT_CHANNELS: 4
+  EMB_DIM: 512
+  NUM_RES_BLOCKS: 1
+  NUM_HEADS: 4
+
+SOLVER:
+  TYPE: AdamW
+  BASE_LR: 0.0001
+  EPOCHS: 700
+  GRAD_L2_CLIP: 1.0
+
+OUTPUT_DIR: Saved

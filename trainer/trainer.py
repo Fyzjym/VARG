@@ -7,7 +7,7 @@ import sys
 from PIL import Image
 import torchvision
 from tqdm import tqdm
-from data_loader.loader import ContentData, latexData
+from data_loader.loader import ContentImage
 import torch.distributed as dist
 import torch.nn.functional as F
 
@@ -40,12 +40,12 @@ class Trainer:
         #     data['laplace'].to(self.device), \
         #     data['content'].to(self.device), \
         #     data['wid'].to(self.device)
-        images, style_ref, laplace_ref, content_ref, wid, latex, latex_seq = data['img'].to(self.device), \
-            data['style'].to(self.device), \
-            data['laplace'].to(self.device), \
-            data['content'].to(self.device), \
-            data['wid'].to(self.device), \
-            data['target'].to(self.device), \
+        images, style_ref, laplace_ref, content_ref, wid, latex, latex_seq = data['img'].to(self.device),\
+            data['style'].to(self.device),\
+            data['laplace'].to(self.device),\
+            data['content'].to(self.device),\
+            data['wid'].to(self.device),\
+            data['target'].to(self.device),\
             data['latex_seq']
 
         # vae encode
@@ -66,18 +66,14 @@ class Trainer:
         x_t, noise = self.diffusion.noise_images(images, t)
         
        
-        # predicted_noise, high_nce_emb, low_nce_emb = self.model(x_t, t, style_ref, laplace_ref, content_ref, tag='train')
-        # predicted_noise, low_nce_emb = self.model(x_t, t, style_ref, laplace_ref, content_ref, tag='train')
-        predicted_noise, low_nce_emb = self.model(
+        predicted_noise, style_embeddings = self.model(
                                             x=x_t, timesteps=t,
                                             style=style_ref, laplace=laplace_ref, content=content_ref, tag='train')
 
         # calculate loss
         recon_loss = self.recon_criterion(predicted_noise, noise)
-        # high_nce_loss = self.nce_criterion(high_nce_emb, labels=wid)
-        low_nce_loss = self.nce_criterion(low_nce_emb, labels=wid)
-        # loss = recon_loss + high_nce_loss + low_nce_loss
-        loss = recon_loss + low_nce_loss
+        style_loss = self.nce_criterion(style_embeddings, labels=wid)
+        loss = recon_loss + style_loss
 
         # backward and update trainable parameters
         self.optimizer.zero_grad()
@@ -86,10 +82,8 @@ class Trainer:
 
         if dist.get_rank() == 0:
             # log file
-            # loss_dict = {"reconstruct_loss": recon_loss.item(), "high_nce_loss": high_nce_loss.item(),
-            #              "low_nce_loss": low_nce_loss.item()}
             loss_dict = {"reconstruct_loss": recon_loss.item(),
-                         "low_nce_loss": low_nce_loss.item()}
+                         "style_contrastive_loss": style_loss.item()}
             self.tb_summary.add_scalars("loss", loss_dict, step)
             self._progress(recon_loss.item(), pbar)
 
@@ -100,12 +94,12 @@ class Trainer:
         self.model.train()
         # prepare input
 
-        images, style_ref, laplace_ref, content_ref, wid, target, target_lengths = data['img'].to(self.device), \
-            data['style'].to(self.device), \
-            data['laplace'].to(self.device), \
-            data['content'].to(self.device), \
-            data['wid'].to(self.device), \
-            data['target'].to(self.device), \
+        images, style_ref, laplace_ref, content_ref, wid, target, target_lengths = data['img'].to(self.device),\
+            data['style'].to(self.device),\
+            data['laplace'].to(self.device),\
+            data['content'].to(self.device),\
+            data['wid'].to(self.device),\
+            data['target'].to(self.device),\
             data['target_lengths'].to(self.device)
         
         # vae encode
@@ -117,7 +111,7 @@ class Trainer:
         t = self.diffusion.sample_timesteps(latent_images.shape[0], finetune=True).to(self.device)
         x_t, noise = self.diffusion.noise_images(latent_images, t)
         
-        x_start, predicted_noise, high_nce_emb, low_nce_emb = self.diffusion.train_ddim(self.model, x_t, style_ref, laplace_ref,
+        x_start, predicted_noise, auxiliary_style_embeddings, style_embeddings = self.diffusion.train_ddim(self.model, x_t, style_ref, laplace_ref,
                                                         content_ref, t, sampling_timesteps=5)
  
         # calculate loss
@@ -125,9 +119,9 @@ class Trainer:
         rec_out = self.ocr_model(x_start)
         input_lengths = torch.IntTensor(x_start.shape[0]*[rec_out.shape[0]])
         ctc_loss = self.ctc_criterion(F.log_softmax(rec_out, dim=2), target, input_lengths, target_lengths)
-        high_nce_loss = self.nce_criterion(high_nce_emb, labels=wid)
-        low_nce_loss = self.nce_criterion(low_nce_emb, labels=wid)
-        loss = recon_loss + high_nce_loss + low_nce_loss + 0.1*ctc_loss
+        auxiliary_style_loss = self.nce_criterion(auxiliary_style_embeddings, labels=wid)
+        style_loss = self.nce_criterion(style_embeddings, labels=wid)
+        loss = recon_loss + auxiliary_style_loss + style_loss + 0.1*ctc_loss
 
         # backward and update trainable parameters
         self.optimizer.zero_grad()
@@ -138,8 +132,8 @@ class Trainer:
 
         if dist.get_rank() == 0:
             # log file
-            loss_dict = {"reconstruct_loss": recon_loss.item(), "high_nce_loss": high_nce_loss.item(),
-                         "low_nce_loss": low_nce_loss.item(), "ctc_loss": ctc_loss.item()}
+            loss_dict = {"reconstruct_loss": recon_loss.item(), "auxiliary_style_loss": auxiliary_style_loss.item(),
+                         "style_contrastive_loss": style_loss.item(), "ctc_loss": ctc_loss.item()}
             self.tb_summary.add_scalars("loss", loss_dict, step)
             self._progress(recon_loss.item(), pbar)
 
@@ -165,23 +159,24 @@ class Trainer:
         #     test_data['laplace'].to(self.device), \
         #     test_data['content'].to(self.device)
 
-        images, style_ref, laplace_ref, content_ref, latex = test_data['img'].to(self.device), \
-            test_data['style'].to(self.device), \
-            test_data['laplace'].to(self.device), \
-            test_data['content'].to(self.device), \
+        images, style_ref, laplace_ref, content_ref, latex = test_data['img'].to(self.device),\
+            test_data['style'].to(self.device),\
+            test_data['laplace'].to(self.device),\
+            test_data['content'].to(self.device),\
             test_data['target'].to(self.device)
 
-        # load_content = ContentData()
         # forward
-        text_path_1 = 'path2/crohme2019_diffusion/CROHME_content/test/000/65_alfonso.png'
+        text_path_1 = cfg.DATA_LOADER.VALIDATION_CONTENT
+        if not text_path_1:
+            raise ValueError('Set DATA_LOADER.VALIDATION_CONTENT to a rendered expression image.')
         texts = [text_path_1]
         # latex_str = r"x = r \cos \theta"
 
 
         for text in texts:
             rank = dist.get_rank()
-            load_content = ContentData(content_path=text)
-            text_ref = load_content.get_content() # 8 1 256 256
+            load_content = ContentImage(content_path=text)
+            text_ref = load_content.load() # 8 1 256 256
             text_ref = text_ref.to(self.device).repeat(style_ref.shape[0], 1, 1, 1)
             x = torch.randn((text_ref.shape[0], 4, 32, 32)).to(self.device)
 
@@ -206,9 +201,7 @@ class Trainer:
             else:
                 pbar = self.data_loader
 
-            # print("val only")
             # self._valid_iter(epoch)
-            # print("val done")
             # return
 
             for step, data in enumerate(pbar):

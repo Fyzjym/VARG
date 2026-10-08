@@ -2,12 +2,11 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torchvision.models as models
-from models.transformer import *
+from models.transformer import PositionalEncoding2D
 from einops import rearrange, repeat
 import math
 from models.resnet_dilation import resnet18 as resnet18_dilation
-# from models.hblc_gnn import HGE
-from models.hblc_cnn import HyperbolicCNNEncoder
+from models.hcem import HCEM
 
 from typing import Tuple, List
 from torch.nn import functional as F
@@ -71,8 +70,6 @@ class SelfAttention_RoPE(nn.Module):
         # ============================================
 
         return self.proj(out.permute(0, 2, 1, 3).contiguous().view(B, L, C))
-
-
 
 
 class FFN(nn.Module):
@@ -148,11 +145,15 @@ class StyleEncoder(nn.Module):
 
 
 # ==============================================================================
-# M 3: STA
+# SAT: Style-Aware Transformer
 # ==============================================================================
 
 class SAT(nn.Module):
-    """
+    """Style-Aware Transformer with style-modulated blockwise causal attention.
+
+    Five scales (1, 2, 4, 8, 16) construct 341 continuous content tokens.
+    Each query can see its own scale and all coarser scales. The 256
+    finest-scale tokens provide context for HCEM and the diffusion denoiser.
     """
 
     def __init__(self,
@@ -247,54 +248,37 @@ class SAT(nn.Module):
         return output
 
 # ==============================================================================
-# CAM
+# VARG conditioning: visual encoders -> SAT -> HCEM
 # ==============================================================================
-
-class CAM(nn.Module):
-    """
-    CAM
-    """
-    def __init__(self, embed_dim: int, hidden_dim_ratio: int = 2):
-        super().__init__()
-        self.gate_network = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim // hidden_dim_ratio),
-            nn.GELU(),
-            nn.Linear(embed_dim // hidden_dim_ratio, embed_dim),
-            nn.Sigmoid()
-        )
-        with torch.no_grad():
-            self.gate_network[-2].weight.zero_()
-            self.gate_network[-2].bias.fill_(-1)
-
-    def forward(self, visual_features: torch.Tensor, structural_features: torch.Tensor) -> torch.Tensor:
-        gate = self.gate_network(visual_features)
-        fused_features = visual_features + gate * structural_features
-        return fused_features
-
-
 
 
 ### merge the handwriting style and printed content
-class Mix_TR(nn.Module):
+class VARGConditioner(nn.Module):
+    """Construct diffusion context from printed content and reference handwriting.
+
+    ``sat`` is the Style-Aware Transformer; ``hcem.heu`` and ``hcem.cam``
+    expose the Hyperbolic Embedding Unit and Context Aggregation Module.
+    The registered hierarchy and public names follow the manuscript.
+    """
     def __init__(self, d_model=256, nhead=8, num_encoder_layers=1, num_decoder_layers=1,
                  dim_feedforward=2048, dropout=0.1, activation="relu", return_intermediate_dec=False,
                  normalize_before=True):
-        super(Mix_TR, self).__init__()
+        super(VARGConditioner, self).__init__()
         
 
         self.add_position2D = PositionalEncoding2D(dropout=0.1, d_model=d_model) # add 2D position encoding
-        self.low_pro_mlp = nn.Sequential(
+        self.style_projector = nn.Sequential(
             nn.Linear(512, 4096), nn.GELU(), nn.Linear(4096, 256))
 
 
-        ### low frequency style encoder
-        self.Feat_Encoder = self.initialize_resnet18()
+        # Separate style and content encoders, with independent parameters.
+        self.style_encoder = self.build_visual_encoder()
         self.style_dilation_layer = resnet18_dilation().conv5_x
         
-        self.content_encoder = self.initialize_resnet18()
+        self.content_encoder = self.build_visual_encoder()
         self.content_dilation_layer = resnet18_dilation().conv5_x
 
-        self.var = SAT(
+        self.sat = SAT(
             in_chans=512,
             depth=6,
             embed_dim=768,
@@ -302,13 +286,12 @@ class Mix_TR(nn.Module):
             output_dim=512,
             patch_nums=(1, 2, 4, 8, 16))
 
-        self.h_cnn_encoder = HyperbolicCNNEncoder(
+        self.hcem = HCEM(
             in_chans=512,
             embed_dim=256,
             depth=4,
             output_dim=512
         )
-        self.cont_arg_m = CAM(embed_dim=512)
 
         self._reset_parameters()
 
@@ -318,7 +301,7 @@ class Mix_TR(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def initialize_resnet18(self,):
+    def build_visual_encoder(self,):
         resnet = models.resnet18(weights='ResNet18_Weights.DEFAULT')
         resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         resnet.layer4 = nn.Identity()
@@ -326,7 +309,7 @@ class Mix_TR(nn.Module):
         resnet.avgpool = nn.Identity()
         return resnet
 
-    def process_style_feature(self, encoder, dilation_layer, style, add_position2D):
+    def encode_feature_map(self, encoder, dilation_layer, style, add_position2D):
         style = encoder(style)
         style = rearrange(style, 'n (c h w) ->n c h w', c=256, h=16).contiguous()
         style = dilation_layer(style)
@@ -336,45 +319,43 @@ class Mix_TR(nn.Module):
         return style_seq, style
 
     
-    def get_low_style_feature(self, style):
+    def encode_style(self, style):
 
-        return self.process_style_feature(self.Feat_Encoder, self.style_dilation_layer, style, self.add_position2D)
+        return self.encode_feature_map(self.style_encoder, self.style_dilation_layer, style, self.add_position2D)
 
 
+    def encode_content(self, content):
 
-    def get_content_style_feature(self, content):
-
-        return self.process_style_feature(self.content_encoder, self.content_dilation_layer, content, self.add_position2D)
+        return self.encode_feature_map(self.content_encoder, self.content_dilation_layer, content, self.add_position2D)
 
     
-    def forward(self, style, laplace, content, latex):
+    def forward(self, style, laplace=None, content=None, latex=None):
+        """Return context [B, 256, 512] and style embeddings [B, 2, 256].
+
+        ``style`` contains two views from the same writer. ``content`` is
+        the rendered expression image. ``laplace`` and ``latex`` are reserved
+        input slots retained for existing data adapters; neither enters SAT
+        or HCEM in the current implementation.
         """
 
-        :param style:
-        :param laplace:
-        :param content:
-        :param latex: list, including B raw strings, like ['a _ { 1 } + a _ { 2 }', '\\cos ^ { 3 } y = \\frac { 1 } { 4 } ( \\cos 3 y + 3 \\cos y )']
-        :return:
-        """
 
-
-        # get the high frequency and style feature
+        # Two same-writer style views for the supervised contrastive objective.
         anchor_style = style[:, 0, :, :].clone().unsqueeze(1).contiguous()
         pos_style = style[:, 1, :, :].clone().unsqueeze(1).contiguous()
 
-        # get the low frequency and style feature
+        # Project and normalize the style views.
         anchor_low = anchor_style
-        anchor_low_feature, anchor_low_feature_patch = self.get_low_style_feature(anchor_low)
-        anchor_low_nce = self.low_pro_mlp(anchor_low_feature) # t n c
+        anchor_low_feature, anchor_low_feature_patch = self.encode_style(anchor_low)
+        anchor_low_nce = self.style_projector(anchor_low_feature) # t n c
         anchor_low_nce = torch.mean(anchor_low_nce, dim=0)
 
         pos_low = pos_style 
-        pos_low_feature, pos_low_feature_patch = self.get_low_style_feature(pos_low)
-        pos_low_nce = self.low_pro_mlp(pos_low_feature)
+        pos_low_feature, pos_low_feature_patch = self.encode_style(pos_low)
+        pos_low_nce = self.style_projector(pos_low_feature)
         pos_low_nce = torch.mean(pos_low_nce, dim=0)
 
-        low_nce_emb = torch.stack([anchor_low_nce, pos_low_nce], dim=1) # B 2 C
-        low_nce_emb = nn.functional.normalize(low_nce_emb, p=2, dim=2)
+        style_embeddings = torch.stack([anchor_low_nce, pos_low_nce], dim=1) # B 2 C
+        style_embeddings = nn.functional.normalize(style_embeddings, p=2, dim=2)
 
 
         # content encoder
@@ -383,54 +364,37 @@ class Mix_TR(nn.Module):
         else:
             anchor_content = content[:, 0, :, :].unsqueeze(1).contiguous()
 
-        content_feat, content_feat_patch = self.get_content_style_feature(anchor_content)
+        content_feat, content_feat_patch = self.encode_content(anchor_content)
 
-        # SFRD
-        # style_hs = self.decoder(content_feat, anchor_low_feature, tgt_mask=None)
-        # VAR
-        style_hs = self.var(content_feat_patch, anchor_low_feature_patch)
-        structural_features = self.h_cnn_encoder(content_feat_patch)
-        style_hs = self.cont_arg_m(style_hs, structural_features)
+        # SAT context followed by HEU and CAM refinement in HCEM.
+        style_hs = self.sat(content_feat_patch, anchor_low_feature_patch)
+        style_hs = self.hcem(style_hs, content_feat_patch)
 
-        return style_hs.contiguous(), low_nce_emb # n t c # 32 256 512
+        return style_hs.contiguous(), style_embeddings # n t c # 32 256 512
 
 
-
-    def generate(self, style, laplace, content, latex):
+    def generate(self, style, laplace=None, content=None, latex=None):
+        """Return diffusion context from a single style reference and content image."""
         if style.shape[1] == 1:
             anchor_style = style
-            # anchor_high = laplace
         else:
             anchor_style = style[:, 0, :, :].unsqueeze(1).contiguous()
-            # anchor_high = laplace[:, 0, :, :].unsqueeze(1).contiguous()
 
-        # get the highg frequency and style feature
-        # anchor_high_feature = self.get_high_style_feature(anchor_high) # t n c
-        # get the low frequency and style feature
+        # Encode the reference handwriting style.
         anchor_low = anchor_style
-        # anchor_low_feature, = self.get_low_style_feature(anchor_low)
-        anchor_low_feature, anchor_low_feature_patch = self.get_low_style_feature(anchor_low)
+        anchor_low_feature, anchor_low_feature_patch = self.encode_style(anchor_low)
 
-        # anchor_mask = self.low_feature_filter(anchor_low_feature)
-        # anchor_low_feature = anchor_low_feature * anchor_mask
 
         # content encoder
         if content.shape[1] == 1:
             anchor_content = content
         else:
             anchor_content = content[:, 0, :, :].unsqueeze(1).contiguous()
-        # content_feat = self.get_content_style_feature(anchor_content)
-        content_feat, content_feat_patch = self.get_content_style_feature(anchor_content)
+        content_feat, content_feat_patch = self.encode_content(anchor_content)
 
         # fusion of content and style features
-        # SFRD
-        # style_hs = self.decoder(content_feat, anchor_low_feature, tgt_mask=None)
-        # hs = self.fre_decoder(style_hs[0], anchor_high_feature, tgt_mask=None)
-        # VAR
-        style_hs = self.var(content_feat_patch, anchor_low_feature_patch)
-        structural_features = self.h_cnn_encoder(content_feat_patch)
-        style_hs = self.cont_arg_m(style_hs, structural_features)
+        # SAT context followed by HEU and CAM refinement in HCEM.
+        style_hs = self.sat(content_feat_patch, anchor_low_feature_patch)
+        style_hs = self.hcem(style_hs, content_feat_patch)
 
-        # return hs[0].permute(1, 0, 2).contiguous()
-        # return style_hs[0].permute(1, 0, 2).contiguous()
         return style_hs.contiguous()

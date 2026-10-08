@@ -5,28 +5,14 @@ import torch
 import numpy as np
 import pickle
 from torchvision import transforms
-import lmdb
 from PIL import Image
 import torchvision
 import cv2
 from einops import rearrange, repeat
 import time
 import torch.nn.functional as F
+from parse_config import cfg
 
-# text_path = {'train':'data/IAM64_train.txt',
-#              'test':'data/IAM64_test.txt'}
-
-text_path = {
-    'train': 'path2/crohme2019_diffusion/crohme_train_img_wid_label_more2imgv2.csv',
-    'test': 'path2/crohme2019_diffusion/crohme_tra_test_1_2.csv'}
-
-generate_type = {'iv_s': ['train', 'data/in_vocab.subset.tro.37'],
-                 'iv_u': ['test', 'data/in_vocab.subset.tro.37'],
-                 'oov_s': ['train', 'data/oov.common_words'],
-                 'oov_u': ['test', 'data/oov.common_words'],
-                 'train_all': ['train'],
-                 'test_all': ['test'],
-                 }
 
 # define the letters and the width of style image
 letters = ["!", "(", ")", "+", ",", "-", ".", "/", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "=", "A", "B", "C",
@@ -42,18 +28,24 @@ style_len = 256
 # latex_max_length = 256  # exp01
 latex_max_length = 128 # exp02，exp03
 
-"""prepare the IAM dataset for training"""
+"""CROHME-compatible handwritten mathematical expression data"""
 
 
-class IAMDataset(Dataset):
-    def __init__(self, image_path, style_path, laplace_path, content_path, type, content_type='unifont', max_len=96):
+class HMEDataset(Dataset):
+    """Writer-labelled HME targets, style views, and rendered content images."""
+
+    def __init__(self, image_path, style_path, laplace_path, content_path, split,
+                 content_type='unifont', max_len=96, annotation_path=None):
         self.max_len = max_len
         self.style_len = style_len
-        self.data_dict = self.load_data(text_path[type])
-        self.image_path = os.path.join(image_path, type)
-        self.style_path = os.path.join(style_path, type)
-        self.laplace_path = os.path.join(laplace_path, type)
-        self.content_path = os.path.join(content_path, type)
+        if annotation_path is None:
+            annotation_path = (cfg.DATA_LOADER.TRAIN_ANNOTATIONS if split == 'train'
+                               else cfg.DATA_LOADER.TEST_ANNOTATIONS)
+        self.data_dict = self.load_annotations(annotation_path)
+        self.image_path = os.path.join(image_path, split)
+        self.style_path = os.path.join(style_path, split)
+        self.laplace_path = os.path.join(laplace_path, split) if laplace_path else None
+        self.content_path = os.path.join(content_path, split)
 
         self.max_length = latex_max_length
 
@@ -68,11 +60,9 @@ class IAMDataset(Dataset):
         self.resize_transform = torchvision.transforms.Resize([256, 256], interpolation=Image.NEAREST)  # 缩放到256x256
 
         # self.content_transform = torchvision.transforms.Resize([64, 32], interpolation=Image.NEAREST)
-        # self.con_symbols = self.get_symbols(content_type)
-        # self.laplace = torch.tensor([[0, 1, 0],[1, -4, 1],[0, 1, 0]], dtype=torch.float
         #                             ).to(torch.float32).view(1, 1, 3, 3).contiguous()
 
-    def load_data(self, data_path):
+    def load_annotations(self, data_path):
         with open(data_path, 'r') as f:
             train_data = f.readlines()
             train_data = [i.strip().split('  ') for i in train_data]
@@ -80,7 +70,6 @@ class IAMDataset(Dataset):
             idx = 0
             max_len = 0
             for i in train_data:
-                # print(i) # ['101_alfonso', 'alfonso', '000', 'S = ( \\sum _ { i = 1 } ^ { n } \\theta _ { i } - ( n - 2 ) \\pi ) r ^ { 2 }']
                 s_id = i[2]
                 image = i[0] + '.png'
                 transcription = i[3]
@@ -96,8 +85,9 @@ class IAMDataset(Dataset):
         style_index = random.sample(range(len(style_list)), 2)  # anchor and positive
         style_images = [cv2.imread(os.path.join(self.style_path, wr_id, style_list[index]), flags=0)
                         for index in style_index]
-        laplace_images = [cv2.imread(os.path.join(self.laplace_path, wr_id, style_list[index]), flags=0)
-                          for index in style_index]
+        laplace_images = ([cv2.imread(os.path.join(self.laplace_path, wr_id, style_list[index]), flags=0)
+                           for index in style_index] if self.laplace_path else
+                          [np.zeros_like(image) for image in style_images])
 
         height = style_images[0].shape[0]
         assert height == style_images[1].shape[0], 'the heights of style images are not consistent'
@@ -158,7 +148,7 @@ class IAMDataset(Dataset):
                 'transcr': transcr,
                 'image_name': image_name}
 
-    def collate_fn_(self, batch):
+    def collate_batch(self, batch):
         width = [item['img'].shape[2] for item in batch]
         c_width = [len(item['content']) for item in batch]
         s_width = [item['style'].shape[2] for item in batch]
@@ -195,10 +185,8 @@ class IAMDataset(Dataset):
 
             # try:
             #     content = [self.letter2index[i] for i in item['content']]
-            #     content = self.con_symbols[content]
             #     content_ref[idx, :len(content)] = content
             # except:
-            #     print('content', item['content'])
 
             """
             filter
@@ -224,14 +212,6 @@ class IAMDataset(Dataset):
         # content_ref = 1.0 - content_ref # invert the image # our img different the unifont.pickle
         # return {'img':imgs, 'style':style_ref, 'content':content_ref, 'wid':wid, 'laplace':laplace_ref,
         #         'target':target, 'target_lengths':target_lengths, 'image_name':image_name}
-        # print('***  collate_fn_  ***')
-        # print(imgs.shape)
-        # print(style_ref.shape)
-        # print(content_arc.shape)
-        # print(laplace_ref.shape)
-        # print(target.shape)
-        # print(target[0])
-        # print(image_name[0])
         return {'img': imgs, 'style': style_ref, 'content': content_arc, 'wid': wid, 'laplace': laplace_ref,
                 'target': target, 'target_lengths': target_lengths, 'image_name': image_name, 'latex_seq':transcr}
 
@@ -239,10 +219,10 @@ class IAMDataset(Dataset):
 """random sampling of style images during inference"""
 
 
-class Random_StyleIAMDataset(IAMDataset):
-    def __init__(self, style_path, lapalce_path, content_path, ref_num) -> None:
+class RandomStyleHMEDataset(HMEDataset):
+    def __init__(self, style_path, laplace_path, content_path, ref_num) -> None:
         self.style_path = style_path
-        self.laplace_path = lapalce_path
+        self.laplace_path = laplace_path
         self.content_path = content_path
 
         self.author_id = os.listdir(os.path.join(self.style_path))
@@ -260,7 +240,8 @@ class Random_StyleIAMDataset(IAMDataset):
             style_ref = style_list[index]
 
             style_image = cv2.imread(os.path.join(self.style_path, wr_id, style_ref), flags=0)
-            laplace_image = cv2.imread(os.path.join(self.laplace_path, wr_id, style_ref), flags=0)
+            laplace_image = (cv2.imread(os.path.join(self.laplace_path, wr_id, style_ref), flags=0)
+                             if self.laplace_path else np.zeros_like(style_image))
             if style_image.shape[1] > 128:
                 break
             else:
@@ -308,21 +289,7 @@ class Random_StyleIAMDataset(IAMDataset):
         return {'style': style_ref, 'laplace': laplace_ref, 'wid': wid_list}
 
 
-# """prepare the content image during inference"""
-# class ContentData(IAMDataset):
-#     def __init__(self, content_type='unifont') -> None:
-#         self.letters = letters
-#         self.letter2index = {label: n for n, label in enumerate(self.letters)}
-#         self.con_symbols = self.get_symbols(content_type)
-#
-#     def get_content(self, label):
-#         word_arch = [self.letter2index[i] for i in label]
-#         content_ref = self.con_symbols[word_arch]
-#         content_ref = 1.0 - content_ref
-#         return content_ref.unsqueeze(0)
-
-
-class ContentData(IAMDataset):
+class ContentImage(HMEDataset):
     """
     prepare one content image during inference
     """
@@ -335,7 +302,7 @@ class ContentData(IAMDataset):
         ])
         self.resize_transform = torchvision.transforms.Resize([256, 256], interpolation=Image.NEAREST)  # 缩放到256x256
 
-    def get_content(self, ):
+    def load(self):
         content_arc = Image.open(self.content_acr_path).convert('RGB')
         content_arc = self.transforms(content_arc)
         content_arc = self.resize_transform(content_arc)
@@ -345,7 +312,7 @@ class ContentData(IAMDataset):
         return content_arc
 
 
-class ContentDataSet(IAMDataset):
+class ContentImageCollection(HMEDataset):
     """
     prepare the N content image during inference
     """
@@ -360,7 +327,7 @@ class ContentDataSet(IAMDataset):
         ])
         self.resize_transform = torchvision.transforms.Resize([256, 256], interpolation=Image.NEAREST)  # 缩放到256x256
 
-    def get_content(self, ):
+    def load(self):
         content_arc_list = []
         img_list = []
         for ipath in self.content_list:
@@ -376,7 +343,7 @@ class ContentDataSet(IAMDataset):
         return content_arc_combined, img_list
 
 
-class latexData(IAMDataset):
+class LaTeXTokens(HMEDataset):
     """
     latex 2 traget
     """
@@ -386,7 +353,7 @@ class latexData(IAMDataset):
         self.letters = letters
         self.letter2index = {label: n for n, label in enumerate(self.letters)}
 
-    def get_content(self, ):
+    def encode(self):
         # Assuming batch is a list containing your latex string
         batch = [self.latex_str]
         max_target_lengths = latex_max_length
@@ -400,13 +367,13 @@ class latexData(IAMDataset):
         return target
 
 
-class LatexDataSet(IAMDataset):
+class LaTeXAnnotationCollection(HMEDataset):
     """
     get N latex ttaget base image name list.
     """
 
-    def __init__(self, img_name_list=None, mode='train') -> None:
-        self.cop = 'path2/crohme2019_diffusion/crohme_train_img_wid_label_alllatex.csv'
+    def __init__(self, img_name_list=None, mode='train', annotation_path=None) -> None:
+        self.cop = annotation_path or cfg.DATA_LOADER.LATEX_ANNOTATIONS
         self.name_list = img_name_list
         self.all_lines = self.load_all_lines()  # 预加载文件内容
 
@@ -422,7 +389,7 @@ class LatexDataSet(IAMDataset):
                 return D
         return None
 
-    def get_content(self):
+    def encode(self):
         target_l = []
 
         for i_name in self.name_list:
@@ -430,8 +397,8 @@ class LatexDataSet(IAMDataset):
 
             if latex is not None:
 
-                latex_obj = latexData(latex_str=latex)
-                latex_obj = latex_obj.get_content()
+                latex_obj = LaTeXTokens(latex_str=latex)
+                latex_obj = latex_obj.encode()
                 target_l.append(latex_obj)
 
             else:

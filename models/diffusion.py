@@ -85,8 +85,7 @@ class Diffusion:
             time = (total_timesteps * time).long().to(self.device)
             time_next = (total_timesteps * time_next).long().to(self.device)
             
-            # predicted_noise, high_nce_emb, low_nce_emb = model(x, time, styles, laplace, content, tag='train')
-            predicted_noise, high_nce_emb, low_nce_emb = model(x, time, styles, laplace, content, tag='train')
+            predicted_noise, auxiliary_style_embeddings, style_embeddings = model(x, time, styles, laplace, content, tag='train')
 
             noise_list.append(predicted_noise)
             beta = self.beta[time][:, None, None, None]
@@ -104,11 +103,11 @@ class Diffusion:
 
             noise = torch.randn_like(x)
 
-            x = x_start * alpha_hat_next.sqrt() + \
-                  c * predicted_noise + \
+            x = x_start * alpha_hat_next.sqrt() +\
+                  c * predicted_noise +\
                   sigma * noise
         
-        return x, noise_list[0], high_nce_emb, low_nce_emb
+        return x, noise_list[0], auxiliary_style_embeddings, style_embeddings
 
     @torch.no_grad()
     # def ddim_sample(self, model, vae, n, x, styles, laplace, content, sampling_timesteps=50, eta=0):
@@ -143,8 +142,8 @@ class Diffusion:
 
             noise = torch.randn_like(x)
 
-            x = x_start * alpha_hat_next.sqrt() + \
-                  c * predicted_noise + \
+            x = x_start * alpha_hat_next.sqrt() +\
+                  c * predicted_noise +\
                   sigma * noise
 
 
