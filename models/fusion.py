@@ -329,13 +329,12 @@ class VARGConditioner(nn.Module):
         return self.encode_feature_map(self.content_encoder, self.content_dilation_layer, content, self.add_position2D)
 
     
-    def forward(self, style, laplace=None, content=None, latex=None):
+    def forward(self, style, content=None, latex=None):
         """Return context [B, 256, 512] and style embeddings [B, 2, 256].
 
         ``style`` contains two views from the same writer. ``content`` is
-        the rendered expression image. ``laplace`` and ``latex`` are reserved
-        input slots retained for existing data adapters; neither enters SAT
-        or HCEM in the current implementation.
+        the rendered expression image. ``latex`` is a reserved input slot
+        retained for existing data adapters; it does not enter SAT or HCEM.
         """
 
 
@@ -373,7 +372,7 @@ class VARGConditioner(nn.Module):
         return style_hs.contiguous(), style_embeddings # n t c # 32 256 512
 
 
-    def generate(self, style, laplace=None, content=None, latex=None):
+    def generate(self, style, content=None, latex=None):
         """Return diffusion context from a single style reference and content image."""
         if style.shape[1] == 1:
             anchor_style = style

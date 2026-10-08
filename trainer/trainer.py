@@ -35,14 +35,8 @@ class Trainer:
         self.model.train()
         # prepare input
 
-        # images, style_ref, laplace_ref, content_ref, wid = data['img'].to(self.device), \
-        #     data['style'].to(self.device), \
-        #     data['laplace'].to(self.device), \
-        #     data['content'].to(self.device), \
-        #     data['wid'].to(self.device)
-        images, style_ref, laplace_ref, content_ref, wid, latex, latex_seq = data['img'].to(self.device),\
+        images, style_ref, content_ref, wid, latex, latex_seq = data['img'].to(self.device),\
             data['style'].to(self.device),\
-            data['laplace'].to(self.device),\
             data['content'].to(self.device),\
             data['wid'].to(self.device),\
             data['target'].to(self.device),\
@@ -57,7 +51,6 @@ class Trainer:
         torch.Size([8, 3, 256, 256])  images
         torch.Size([8, 4, 32, 32])    images after vae
         torch.Size([8, 2, 256, 256])  style
-        torch.Size([8, 2, 256, 256])  laplace
         torch.Size([8, 3, 256, 256])  content
         """
 
@@ -68,7 +61,7 @@ class Trainer:
        
         predicted_noise, style_embeddings = self.model(
                                             x=x_t, timesteps=t,
-                                            style=style_ref, laplace=laplace_ref, content=content_ref, tag='train')
+                                            style=style_ref, content=content_ref, tag='train')
 
         # calculate loss
         recon_loss = self.recon_criterion(predicted_noise, noise)
@@ -94,9 +87,8 @@ class Trainer:
         self.model.train()
         # prepare input
 
-        images, style_ref, laplace_ref, content_ref, wid, target, target_lengths = data['img'].to(self.device),\
+        images, style_ref, content_ref, wid, target, target_lengths = data['img'].to(self.device),\
             data['style'].to(self.device),\
-            data['laplace'].to(self.device),\
             data['content'].to(self.device),\
             data['wid'].to(self.device),\
             data['target'].to(self.device),\
@@ -111,7 +103,7 @@ class Trainer:
         t = self.diffusion.sample_timesteps(latent_images.shape[0], finetune=True).to(self.device)
         x_t, noise = self.diffusion.noise_images(latent_images, t)
         
-        x_start, predicted_noise, auxiliary_style_embeddings, style_embeddings = self.diffusion.train_ddim(self.model, x_t, style_ref, laplace_ref,
+        x_start, predicted_noise, auxiliary_style_embeddings, style_embeddings = self.diffusion.train_ddim(self.model, x_t, style_ref,
                                                         content_ref, t, sampling_timesteps=5)
  
         # calculate loss
@@ -154,14 +146,8 @@ class Trainer:
         test_loader_iter = iter(self.valid_data_loader)
         test_data = next(test_loader_iter)
         # prepare input
-        # images, style_ref, laplace_ref, content_ref = test_data['img'].to(self.device), \
-        #     test_data['style'].to(self.device), \
-        #     test_data['laplace'].to(self.device), \
-        #     test_data['content'].to(self.device)
-
-        images, style_ref, laplace_ref, content_ref, latex = test_data['img'].to(self.device),\
+        images, style_ref, content_ref, latex = test_data['img'].to(self.device),\
             test_data['style'].to(self.device),\
-            test_data['laplace'].to(self.device),\
             test_data['content'].to(self.device),\
             test_data['target'].to(self.device)
 
@@ -183,9 +169,7 @@ class Trainer:
             # latex_obj = [latex_str] * style_ref.shape[0]
 
 
-            # preds = self.diffusion.ddim_sample(self.model, self.vae, images.shape[0], x, style_ref, laplace_ref, text_ref)
-            # preds = self.diffusion.ddim_sample(self.model, self.vae, images.shape[0], x, style_ref, laplace_ref, text_ref, latex_obj)
-            preds = self.diffusion.ddim_sample(self.model, self.vae, images.shape[0], x, style_ref, laplace_ref, text_ref)
+            preds = self.diffusion.ddim_sample(self.model, self.vae, images.shape[0], x, style_ref, text_ref)
             out_path = os.path.join(self.save_sample_dir, f"epoch-{epoch}-{65}-process-{rank}.png")
             self._save_images(preds, out_path)
 

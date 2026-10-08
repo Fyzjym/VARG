@@ -34,7 +34,7 @@ latex_max_length = 128 # exp02，exp03
 class HMEDataset(Dataset):
     """Writer-labelled HME targets, style views, and rendered content images."""
 
-    def __init__(self, image_path, style_path, laplace_path, content_path, split,
+    def __init__(self, image_path, style_path, content_path, split,
                  content_type='unifont', max_len=96, annotation_path=None):
         self.max_len = max_len
         self.style_len = style_len
@@ -44,7 +44,6 @@ class HMEDataset(Dataset):
         self.data_dict = self.load_annotations(annotation_path)
         self.image_path = os.path.join(image_path, split)
         self.style_path = os.path.join(style_path, split)
-        self.laplace_path = os.path.join(laplace_path, split) if laplace_path else None
         self.content_path = os.path.join(content_path, split)
 
         self.max_length = latex_max_length
@@ -85,9 +84,6 @@ class HMEDataset(Dataset):
         style_index = random.sample(range(len(style_list)), 2)  # anchor and positive
         style_images = [cv2.imread(os.path.join(self.style_path, wr_id, style_list[index]), flags=0)
                         for index in style_index]
-        laplace_images = ([cv2.imread(os.path.join(self.laplace_path, wr_id, style_list[index]), flags=0)
-                           for index in style_index] if self.laplace_path else
-                          [np.zeros_like(image) for image in style_images])
 
         height = style_images[0].shape[0]
         assert height == style_images[1].shape[0], 'the heights of style images are not consistent'
@@ -99,12 +95,7 @@ class HMEDataset(Dataset):
         new_style_images[0, :, :style_images[0].shape[1]] = style_images[0]
         new_style_images[1, :, :style_images[1].shape[1]] = style_images[1]
 
-        '''laplace images'''
-        laplace_images = [laplace_image / 255.0 for laplace_image in laplace_images]
-        new_laplace_images = np.zeros([2, height, max_w], dtype=np.float32)
-        new_laplace_images[0, :, :laplace_images[0].shape[1]] = laplace_images[0]
-        new_laplace_images[1, :, :laplace_images[1].shape[1]] = laplace_images[1]
-        return new_style_images, new_laplace_images
+        return new_style_images
 
     def __len__(self):
         return len(self.indices)
@@ -130,20 +121,17 @@ class HMEDataset(Dataset):
         content_arc = Image.open(content_path).convert('RGB')  # 直接以灰度图方式读取
         content_arc = self.transforms(content_arc)
 
-        style_ref, laplace_ref = self.get_style_ref(wr_id)
+        style_ref = self.get_style_ref(wr_id)
         style_ref = torch.from_numpy(style_ref).to(torch.float32)  # [2, h , w] achor and positive
-        laplace_ref = torch.from_numpy(laplace_ref).to(torch.float32)  # [2, h , w] achor and positive
 
         image = self.resize_transform(image)
         content_arc = self.resize_transform(content_arc)
         style_ref = self.resize_transform(style_ref)
-        laplace_ref = self.resize_transform(laplace_ref)
 
         return {'img': image,
                 "content_arc": content_arc,
                 'content': label,
                 'style': style_ref,
-                "laplace": laplace_ref,
                 'wid': int(wr_id),
                 'transcr': transcr,
                 'image_name': image_name}
@@ -168,7 +156,6 @@ class HMEDataset(Dataset):
                                  dtype=torch.float32)
 
         style_ref = torch.ones([len(batch), batch[0]['style'].shape[0], max_width, max_width], dtype=torch.float32)
-        laplace_ref = torch.zeros([len(batch), batch[0]['laplace'].shape[0], max_width, max_width], dtype=torch.float32)
 
         # target = torch.zeros([len(batch), max(target_lengths)], dtype=torch.int32)
         target = torch.zeros([len(batch), target_lengths], dtype=torch.int32)
@@ -201,18 +188,14 @@ class HMEDataset(Dataset):
             try:
                 if max_s_width < self.style_len:
                     style_ref[idx, :, :, 0:item['style'].shape[2]] = item['style']
-                    laplace_ref[idx, :, :, 0:item['laplace'].shape[2]] = item['laplace']
                 else:
                     style_ref[idx, :, :, 0:item['style'].shape[2]] = item['style'][:, :, :self.style_len]
-                    laplace_ref[idx, :, :, 0:item['laplace'].shape[2]] = item['laplace'][:, :, :self.style_len]
             except:
                 print('style', item['style'].shape)
 
         wid = torch.tensor([item['wid'] for item in batch])
         # content_ref = 1.0 - content_ref # invert the image # our img different the unifont.pickle
-        # return {'img':imgs, 'style':style_ref, 'content':content_ref, 'wid':wid, 'laplace':laplace_ref,
-        #         'target':target, 'target_lengths':target_lengths, 'image_name':image_name}
-        return {'img': imgs, 'style': style_ref, 'content': content_arc, 'wid': wid, 'laplace': laplace_ref,
+        return {'img': imgs, 'style': style_ref, 'content': content_arc, 'wid': wid,
                 'target': target, 'target_lengths': target_lengths, 'image_name': image_name, 'latex_seq':transcr}
 
 
@@ -220,9 +203,8 @@ class HMEDataset(Dataset):
 
 
 class RandomStyleHMEDataset(HMEDataset):
-    def __init__(self, style_path, laplace_path, content_path, ref_num) -> None:
+    def __init__(self, style_path, content_path, ref_num) -> None:
         self.style_path = style_path
-        self.laplace_path = laplace_path
         self.content_path = content_path
 
         self.author_id = os.listdir(os.path.join(self.style_path))
@@ -240,28 +222,22 @@ class RandomStyleHMEDataset(HMEDataset):
             style_ref = style_list[index]
 
             style_image = cv2.imread(os.path.join(self.style_path, wr_id, style_ref), flags=0)
-            laplace_image = (cv2.imread(os.path.join(self.laplace_path, wr_id, style_ref), flags=0)
-                             if self.laplace_path else np.zeros_like(style_image))
             if style_image.shape[1] > 128:
                 break
             else:
                 continue
         style_image = style_image / 255.0
-        laplace_image = laplace_image / 255.0
-        return style_image, laplace_image
+        return style_image
 
     def __getitem__(self, _):
         batch = []
         for idx in self.author_id:
-            style_ref, laplace_ref = self.get_style_ref(idx)
+            style_ref = self.get_style_ref(idx)
             style_ref = torch.from_numpy(style_ref).unsqueeze(0)
             style_ref = style_ref.to(torch.float32)
-            laplace_ref = torch.from_numpy(laplace_ref).unsqueeze(0)
-            laplace_ref = laplace_ref.to(torch.float32)
             wid = idx
             style_ref = self.resize_transform(style_ref)
-            laplace_ref = self.resize_transform(laplace_ref)
-            batch.append({'style': style_ref, 'laplace': laplace_ref, 'wid': wid})
+            batch.append({'style': style_ref, 'wid': wid})
 
         s_width = [item['style'].shape[2] for item in batch]
         if max(s_width) < self.style_len:
@@ -272,21 +248,18 @@ class RandomStyleHMEDataset(HMEDataset):
         max_width = 256
 
         style_ref = torch.ones([len(batch), batch[0]['style'].shape[0], max_width, max_width], dtype=torch.float32)
-        laplace_ref = torch.zeros([len(batch), batch[0]['laplace'].shape[0], max_width, max_width], dtype=torch.float32)
         wid_list = []
         for idx, item in enumerate(batch):
             try:
                 if max_s_width < self.style_len:
                     style_ref[idx, :, :, 0:item['style'].shape[2]] = item['style']
-                    laplace_ref[idx, :, :, 0:item['laplace'].shape[2]] = item['laplace']
                 else:
                     style_ref[idx, :, :, 0:item['style'].shape[2]] = item['style'][:, :, :self.style_len]
-                    laplace_ref[idx, :, :, 0:item['laplace'].shape[2]] = item['laplace'][:, :, :self.style_len]
                 wid_list.append(item['wid'])
             except:
                 print('style', item['style'].shape)
 
-        return {'style': style_ref, 'laplace': laplace_ref, 'wid': wid_list}
+        return {'style': style_ref, 'wid': wid_list}
 
 
 class ContentImage(HMEDataset):

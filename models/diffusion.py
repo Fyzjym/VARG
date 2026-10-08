@@ -67,8 +67,7 @@ class Diffusion:
             return torch.randint(low=0, high=self.noise_steps, size=(n,))
     
     ## output
-    # def train_ddim(self, model, x, styles, laplace, content, total_t, sampling_timesteps=50, eta=0):
-    def train_ddim(self, model, x, styles, laplace, content, total_t, sampling_timesteps=50, eta=0):
+    def train_ddim(self, model, x, styles, content, total_t, sampling_timesteps=50, eta=0):
 
         total_timesteps, sampling_timesteps = total_t, sampling_timesteps
         #times = torch.linspace(-1, total_timesteps, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
@@ -85,7 +84,7 @@ class Diffusion:
             time = (total_timesteps * time).long().to(self.device)
             time_next = (total_timesteps * time_next).long().to(self.device)
             
-            predicted_noise, auxiliary_style_embeddings, style_embeddings = model(x, time, styles, laplace, content, tag='train')
+            predicted_noise, auxiliary_style_embeddings, style_embeddings = model(x, time, styles, content, tag='train')
 
             noise_list.append(predicted_noise)
             beta = self.beta[time][:, None, None, None]
@@ -110,8 +109,7 @@ class Diffusion:
         return x, noise_list[0], auxiliary_style_embeddings, style_embeddings
 
     @torch.no_grad()
-    # def ddim_sample(self, model, vae, n, x, styles, laplace, content, sampling_timesteps=50, eta=0):
-    def ddim_sample(self, model, vae, n, x, styles, laplace, content, sampling_timesteps=50, eta=0):
+    def ddim_sample(self, model, vae, n, x, styles, content, sampling_timesteps=50, eta=0):
 
         model.eval()
 
@@ -124,8 +122,7 @@ class Diffusion:
         for time, time_next in tqdm(time_pairs, position=1, leave=False, desc='sampling'):
             time = (torch.ones(n) * time).long().to(self.device)
             time_next = (torch.ones(n) * time_next).long().to(self.device)
-            # predicted_noise = model(x, time, styles, laplace, content)
-            predicted_noise = model(x, time, styles, laplace, content)
+            predicted_noise = model(x, time, styles, content)
 
             beta = self.beta[time][:, None, None, None]
             alpha_hat = self.alpha_hat[time][:, None, None, None]
@@ -162,13 +159,13 @@ class Diffusion:
     
 
     @torch.no_grad()
-    def ddpm_sample(self, model, vae, n, x, styles, laplace, content):
+    def ddpm_sample(self, model, vae, n, x, styles, content):
         model.eval()
 
 
         for i in tqdm(reversed(range(0, self.noise_steps)), position=1, leave=False, desc='sampling'):
             time = (torch.ones(n) * i).long().to(self.device)
-            predicted_noise = model(x, time, styles, laplace, content)
+            predicted_noise = model(x, time, styles, content)
             alpha = self.alpha[time][:, None, None, None]
             alpha_hat = self.alpha_hat[time][:, None, None, None]
             beta = self.beta[time][:, None, None, None]

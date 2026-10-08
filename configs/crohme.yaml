@@ -22,7 +22,6 @@ DATA_LOADER:
   IMAGE_PATH: data/CROHME/images
   STYLE_PATH: data/CROHME/styles
   CONTENT_PATH: data/CROHME/content
-  LAPLACE_PATH: ''
   TRAIN_ANNOTATIONS: data/CROHME/annotations/train.txt
   TEST_ANNOTATIONS: data/CROHME/annotations/test.txt
   LATEX_ANNOTATIONS: data/CROHME/annotations/all.txt

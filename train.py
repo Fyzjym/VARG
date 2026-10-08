@@ -39,7 +39,6 @@ def main(opt):
     train_dataset = HMEDataset(
         cfg.DATA_LOADER.IMAGE_PATH,
         cfg.DATA_LOADER.STYLE_PATH,
-        cfg.DATA_LOADER.LAPLACE_PATH,
         cfg.DATA_LOADER.CONTENT_PATH,
         cfg.TRAIN.TYPE)
 
@@ -57,7 +56,6 @@ def main(opt):
     test_dataset = HMEDataset(
         cfg.DATA_LOADER.IMAGE_PATH,
         cfg.DATA_LOADER.STYLE_PATH,
-        cfg.DATA_LOADER.LAPLACE_PATH,
         cfg.DATA_LOADER.CONTENT_PATH,
         cfg.TEST.TYPE)
 

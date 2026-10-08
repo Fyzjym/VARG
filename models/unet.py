@@ -960,8 +960,7 @@ class VARG(nn.Module):
 
         
     
-    # def forward(self, x, timesteps=None, style=None, laplace=None, content=None, tag='test', **kwargs):
-    def forward(self, x, timesteps=None, style=None, laplace=None, content=None, latex_embed=None, tag='test',
+    def forward(self, x, timesteps=None, style=None, content=None, latex_embed=None, tag='test',
                     **kwargs):
 
         """
@@ -977,11 +976,10 @@ class VARG(nn.Module):
         emb = self.time_embed(t_emb) # emb, B 2024
 
         if tag=='train':
-            context, style_embeddings = self.conditioner(style, laplace, content, latex_embed)
+            context, style_embeddings = self.conditioner(style, content, latex_embed)
 
         else:
-            # context = self.conditioner.generate(style, laplace, content)
-            context = self.conditioner.generate(style, laplace, content, latex_embed)
+            context = self.conditioner.generate(style, content, latex_embed)
 
         h = x.type(self.dtype) # h, B 4 32 32
         
